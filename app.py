@@ -1,102 +1,45 @@
 import glob
 import cv2
 import numpy as np
+import base64
 import imutils
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
-def uang_matching():
-    # load template
-    template_data = []
-    template_files = glob.glob('template/*.jpg', recursive=True)
-    print("template loaded:", template_files)
-    # prepare template
-    for template_file in template_files:
-        tmp = cv2.imread(template_file)
-        tmp = imutils.resize(tmp, width=int(tmp.shape[1]*0.5))  # scalling
-        tmp = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)  # grayscale
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        tmp = cv2.filter2D(tmp, -1, kernel) #sharpening
-        tmp = cv2.blur(tmp, (3, 3))  # smoothing
-        tmp = cv2.Canny(tmp, 50, 200)  # Edge with Canny
-        nominal = template_file.replace('template\\', '').replace('.jpg', '')
-        template_data.append({"glob":tmp, "nominal":nominal})
+# load data template
+template_data = []
+template_files = glob.glob('template/*.jpg', recursive=True)
+print("template loaded:", template_files)
+# proses gambar dan masukkan ke dalam array template_data
+for template_file in template_files:
+    tmp = cv2.imread(template_file)
+    tmp = imutils.resize(tmp, width=int(tmp.shape[1]*0.5))  # scalling
+    tmp = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)  # grayscale
+    kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    tmp = cv2.filter2D(tmp, -1, kernel) #sharpening
+    tmp = cv2.blur(tmp, (3, 3))  # smoothing
+    tmp = cv2.Canny(tmp, 50, 200)  # Edge with Canny
+    nominal = template_file.replace('template/', '').replace('.jpg', '')
+    template_data.append({"glob":tmp, "nominal":nominal})
 
-    # template matching
-    result_data = []
-    for image_glob in glob.glob('test/*.jpg'):
-        image_result = {}
-        for template in template_data:
-            image_test = cv2.imread(image_glob)
-            (tmp_height, tmp_width) = template['glob'].shape[:2]
 
-            image_test_p = cv2.cvtColor(image_test, cv2.COLOR_BGR2GRAY)
-            image_test_p = cv2.Canny(image_test_p, 50, 200)
-
-            found = None
-            thershold = 0.4
-            for scale in np.linspace(0.2, 1.0, 20)[::-1]:
-                # scalling uang
-                resized = imutils.resize(
-                    image_test_p, width=int(image_test_p.shape[1] * scale))
-                r = image_test_p.shape[1] / float(resized.shape[1])
-
-                if resized.shape[0] < tmp_height or resized.shape[1] < tmp_width:
-                    break
-
-                # template matching
-                result = cv2.matchTemplate(resized, template['glob'], cv2.TM_CCOEFF_NORMED)
-                (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
-                if found is None or maxVal > found[0]:
-                    found = (maxVal, maxLoc, r)
-                    if maxVal >= thershold:
-                        image_result["image"] = image_glob
-                        image_result["nominal"] = template['nominal']
-                        image_result["match_score"] = maxVal
-                        result_data.append(image_result)
-            if found is not None:
-                (maxVal, maxLoc, r) = found
-                (startX, startY) = (int(maxLoc[0]*r), int(maxLoc[1] * r))
-                (endX, endY) = (
-                    int((maxLoc[0] + tmp_width) * r), int((maxLoc[1] + tmp_height) * r))
-                if maxVal >= thershold:
-                    cv2.rectangle(image_test, (startX, startY),
-                                  (endX, endY), (0, 0, 255), 2)
-
-    return result_data
-
-@app.route('/')
+#API
+@app.route('/', methods=['GET'])
 def index():
     return 'Welcome to Uang Matching API!'
 
-# @app.route('/uang_matching', methods=['GET'])
-# def uang_matching_api():
-#     result = uang_matching()
-#     return jsonify({"result": result})
-
-@app.route('/uang_matching', methods=['POST'])
-def uang_matching_api():
-    # ambil gambar yang di post
-    file = request.files['image']
-    img_np = np.fromstring(file.read(), np.uint8)
-    img = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
-    # template matching
-    template_data = []
-    template_files = glob.glob('template/*.jpg', recursive=True)
-    print("template loaded:", template_files)
-    # prepare template
-    for template_file in template_files:
-        tmp = cv2.imread(template_file)
-        tmp = imutils.resize(tmp, width=int(tmp.shape[1]*0.5))  # scalling
-        tmp = cv2.cvtColor(tmp, cv2.COLOR_BGR2GRAY)  # grayscale
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        tmp = cv2.filter2D(tmp, -1, kernel) #sharpening
-        tmp = cv2.blur(tmp, (3, 3))  # smoothing
-        tmp = cv2.Canny(tmp, 50, 200)  # Edge with Canny
-        nominal = template_file.replace('template/', '').replace('.jpg', '')
-        template_data.append({"glob":tmp, "nominal":nominal})
-    # template matching
+@app.route('/process_image', methods=['POST'])
+def process_image():
+	  # ambil gambar yang di post
+    data = request.get_json()
+    img_base64 = data['image']
+    img_bytes = base64.b64decode(img_base64)
+    npimg = np.fromstring(img_bytes, np.uint8)
+    img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    # proses looping "data template"
     result_data = []
     for template in template_data:
         image_test_p = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -112,8 +55,7 @@ def uang_matching_api():
 
             if resized.shape[0] < tmp_height or resized.shape[1] < tmp_width:
                 break
-
-            # template matching
+            # proses template matching antara "data template" dengan data yang "di post(data test)""
             result = cv2.matchTemplate(resized, template['glob'], cv2.TM_CCOEFF_NORMED)
             (_, maxVal, _, maxLoc) = cv2.minMaxLoc(result)
             if found is None or maxVal > found[0]:
@@ -123,7 +65,10 @@ def uang_matching_api():
                     image_result["nominal"] = template['nominal']
                     image_result["match_score"] = maxVal
                     result_data.append(image_result)
+    # proses debug untuk menampilkan output pada terminal/command prompt
+    print("result:", result_data)
 
+    # output
     return jsonify({"result": result_data})
 
 if __name__ == '__main__':
